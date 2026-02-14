@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FOMO Balance</title>
+  <style>
+    body {
+      margin: 0;
+      background: rgba(0,0,0,0);
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+    .box {
+      background: rgba(0,0,0,0.7);
+      padding: 14px 18px;
+      border-radius: 14px;
+      display: inline-block;
+    }
+    .label {
+      font-size: 14px;
+      opacity: 0.8;
+    }
+    .balance {
+      font-size: 36px;
+      font-weight: 900;
+      margin-top: 4px;
+    }
+    .updated {
+      font-size: 12px;
+      opacity: 0.7;
+      margin-top: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="box">
+  <div class="label">FOMO BALANCE</div>
+  <div class="balance" id="balance">...</div>
+  <div class="updated" id="updated"></div>
+</div>
+
+<script>
+  // ✅ YOUR WALLET
+  const WALLET_ADDRESS = "CviKehFyefZVe4CV7D5ZoDsmwubtpjwysG4oxxDYPqGP";
+
+  // ✅ YOUR TOKEN MINT (same thing as "contract address" on Solana)
+  const TOKEN_MINT = "CfKAMwn3nb6JdEGQAuZQsm7tY8aPJou21CMPTCi6pump";
+
+  // Free public Solana RPC
+  const RPC_URL = "https://api.mainnet-beta.solana.com";
+
+  async function loadBalance() {
+    const body = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTokenAccountsByOwner",
+      params: [
+        WALLET_ADDRESS,
+        { mint: TOKEN_MINT },
+        { encoding: "jsonParsed" }
+      ]
+    };
+
+    const res = await fetch(RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    const json = await res.json();
+    const accounts = json?.result?.value || [];
+
+    let total = 0;
+    for (const acc of accounts) {
+      total += acc?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
+    }
+
+    document.getElementById("balance").textContent =
+      total.toLocaleString(undefined, { maximumFractionDigits: 6 });
+
+    document.getElementById("updated").textContent =
+      "Updated " + new Date().toLocaleTimeString();
+  }
+
+  loadBalance();
+  setInterval(loadBalance, 5000);
+</script>
+
+</body>
+</html>
