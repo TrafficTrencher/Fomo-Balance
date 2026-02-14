@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Traffic Trencher Token Balance</title>
+  <title>Traffic Trencher Balance (USD)</title>
   <style>
     body{margin:0;background:rgba(0,0,0,0);font-family:Arial,sans-serif;color:#fff}
-    .box{display:inline-block;background:rgba(0,0,0,.72);border-radius:16px;padding:16px 18px;min-width:320px}
+    .box{display:inline-block;background:rgba(0,0,0,.72);border-radius:16px;padding:16px 18px;min-width:340px}
     .label{font-size:14px;opacity:.85;letter-spacing:.2px}
-    .value{font-size:42px;font-weight:1000;margin-top:8px;line-height:1.05}
+    .usd{font-size:44px;font-weight:1000;margin-top:8px;line-height:1.05}
+    .tok{font-size:14px;font-weight:900;margin-top:6px;opacity:.9}
     .sub{font-size:12px;opacity:.7;margin-top:8px}
     .err{font-size:12px;color:#ffb3b3;margin-top:10px;display:none}
   </style>
@@ -16,7 +17,8 @@
 <body>
   <div class="box">
     <div class="label">Traffic Trencher Token Balance</div>
-    <div class="value" id="bal">…</div>
+    <div class="usd" id="usd">$…</div>
+    <div class="tok" id="tok">… tokens</div>
     <div class="sub" id="updated">…</div>
     <div class="err" id="err"></div>
   </div>
@@ -32,21 +34,34 @@
     "https://solana.public-rpc.com"
   ];
 
-  // ✅ Refresh slower to avoid rate limits in PRISM
-  const BASE_REFRESH_MS = 15000; // 15s is much safer
-  const MAX_BACKOFF_MS = 120000; // cap at 2 min during failures
+  // Jupiter price API (free)
+  const JUP_PRICE_URL = (mint) =>
+    `https://price.jup.ag/v6/price?ids=${encodeURIComponent(mint)}`;
+
+  // Refresh slower to avoid rate limits in PRISM
+  const BASE_REFRESH_MS = 15000; // 15s
+  const MAX_BACKOFF_MS = 120000; // 2 min
 
   let rpcIndex = 0;
   let backoffMs = BASE_REFRESH_MS;
-  let lastGood = null;
+
+  let lastGood = {
+    tokens: null,
+    price: null,
+    usd: null
+  };
 
   function fmt(n, maxFrac=6){
     return Number(n).toLocaleString(undefined, { maximumFractionDigits: maxFrac });
   }
 
+  function fmtUSD(n){
+    return "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
   async function rpcCall(url, method, params) {
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 8000); // 8s timeout
+    const t = setTimeout(() => controller.abort(), 8000);
 
     try {
       const res = await fetch(url, {
@@ -65,13 +80,12 @@
   }
 
   async function rpc(method, params) {
-    // try each RPC once, starting from current index
     let lastErr = null;
     for (let tries = 0; tries < RPCS.length; tries++) {
       const url = RPCS[(rpcIndex + tries) % RPCS.length];
       try {
         const j = await rpcCall(url, method, params);
-        rpcIndex = (rpcIndex + tries) % RPCS.length; // stick to the one that worked
+        rpcIndex = (rpcIndex + tries) % RPCS.length;
         return j;
       } catch (e) {
         lastErr = e;
@@ -95,10 +109,38 @@
     return total;
   }
 
-  function setUI(balance, note, isError=false) {
-    if (balance !== null && balance !== undefined) {
-      document.getElementById("bal").textContent = fmt(balance, 6);
+  async function getTokenPriceUSD() {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const res = await fetch(JUP_PRICE_URL(TOKEN_MINT), { signal: controller.signal });
+      if (!res.ok) throw new Error("Price API failed");
+      const j = await res.json();
+      const p = j?.data?.[TOKEN_MINT]?.price;
+      if (typeof p !== "number") return null;
+      return p;
+    } finally {
+      clearTimeout(t);
     }
+  }
+
+  function setUI(data, note, isError=false) {
+    const usdEl = document.getElementById("usd");
+    const tokEl = document.getElementById("tok");
+
+    if (data?.usd !== null && data?.usd !== undefined) {
+      usdEl.textContent = fmtUSD(data.usd);
+    } else {
+      usdEl.textContent = "$—";
+    }
+
+    if (data?.tokens !== null && data?.tokens !== undefined) {
+      tokEl.textContent = `${fmt(data.tokens, 6)} tokens`;
+    } else {
+      tokEl.textContent = "— tokens";
+    }
+
     document.getElementById("updated").textContent = note || "";
 
     const err = document.getElementById("err");
@@ -113,17 +155,29 @@
 
   async function loop() {
     try {
-      const bal = await getTokenBalance();
-      lastGood = bal;
-      backoffMs = BASE_REFRESH_MS; // reset backoff on success
-      setUI(bal, "Updated " + new Date().toLocaleTimeString(), false);
+      // Pull balance + price in parallel
+      const [tokens, price] = await Promise.all([
+        getTokenBalance(),
+        getTokenPriceUSD()
+      ]);
+
+      // If price API fails, keep last price (better than blank)
+      const usePrice = (price !== null && price !== undefined) ? price : lastGood.price;
+
+      const usd = (usePrice !== null && usePrice !== undefined)
+        ? (tokens * usePrice)
+        : null;
+
+      lastGood = { tokens, price: usePrice, usd };
+
+      backoffMs = BASE_REFRESH_MS;
+      setUI(lastGood, "Updated " + new Date().toLocaleTimeString(), false);
+
     } catch (e) {
-      // keep showing the last good number instead of blanking
+      // Keep last good value on screen
       setUI(lastGood, "Retrying… " + new Date().toLocaleTimeString(), true);
 
-      // exponential backoff up to cap
       backoffMs = Math.min(MAX_BACKOFF_MS, Math.floor(backoffMs * 1.6));
-      // also rotate RPC next time
       rpcIndex = (rpcIndex + 1) % RPCS.length;
     }
 
