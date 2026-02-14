@@ -5,84 +5,39 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Wallet SPL Balances</title>
   <style>
-    body{
-      margin:0;
-      background: rgba(0,0,0,0);
-      font-family: Arial, sans-serif;
-      color:#fff;
-    }
-    .wrap{
-      display:inline-block;
-      background: rgba(0,0,0,0.72);
-      border-radius: 14px;
-      padding: 14px 16px;
-      min-width: 340px;
-      max-width: 460px;
-    }
-    .title{ font-size: 14px; opacity: .85; letter-spacing: .3px; }
-    .big{ font-size: 26px; font-weight: 900; margin-top: 6px; line-height: 1.1; }
-    .muted{ font-size: 12px; opacity: .7; margin-top: 8px; }
-    .list{
-      margin-top: 10px;
-      max-height: 320px; /* tweak for PRISM */
-      overflow:auto;
-      padding-right: 6px;
-    }
-    .row{
-      display:flex;
-      justify-content:space-between;
-      gap:12px;
-      padding: 8px 0;
-      border-top: 1px solid rgba(255,255,255,0.08);
-      align-items: baseline;
-    }
-    .left{ min-width: 0; }
-    .sym{
-      font-size: 13px;
-      font-weight: 800;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 280px;
-    }
-    .mint{
-      font-size: 11px;
-      opacity: .7;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 280px;
-    }
-    .amt{
-      font-size: 14px;
-      font-weight: 900;
-      text-align:right;
-      white-space: nowrap;
-    }
-    .err{
-      color:#ffb3b3;
-      font-size: 12px;
-      margin-top: 8px;
-    }
+    body{margin:0;background:rgba(0,0,0,0);font-family:Arial,sans-serif;color:#fff}
+    .wrap{display:inline-block;background:rgba(0,0,0,.72);border-radius:14px;padding:14px 16px;min-width:340px;max-width:460px}
+    .title{font-size:14px;opacity:.85;letter-spacing:.3px}
+    .big{font-size:26px;font-weight:900;margin-top:6px;line-height:1.1}
+    .muted{font-size:12px;opacity:.7;margin-top:8px}
+    .list{margin-top:10px;max-height:320px;overflow:auto;padding-right:6px}
+    .row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);align-items:baseline}
+    .left{min-width:0}
+    .sym{font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+    .mint{font-size:11px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+    .amt{font-size:14px;font-weight:900;text-align:right;white-space:nowrap}
+    .err{color:#ffb3b3;font-size:12px;margin-top:8px}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="title">SPL TOKEN BALANCES (INCLUDING USDC)</div>
     <div class="big" id="sol">SOL: …</div>
-
     <div class="list" id="list"></div>
-
     <div class="muted" id="updated">…</div>
     <div class="err" id="err" style="display:none;"></div>
   </div>
 
 <script>
-  // ✅ YOUR WALLET
+  // Wallet you gave me
   const WALLET = "CviKehFyefZVe4CV7D5ZoDsmwubtpjwysG4oxxDYPqGP";
 
-  // Free public Solana RPC (can occasionally rate limit)
-  const RPC = "https://api.mainnet-beta.solana.com";
+  // Try multiple RPCs (free). If one blocks, we fall back.
+  // You can reorder these if one works better for you.
+  const RPCS = [
+    "https://rpc.ankr.com/solana",
+    "https://api.mainnet-beta.solana.com"
+  ];
 
   const REFRESH_MS = 10000;
 
@@ -90,36 +45,45 @@
   const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
   const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
-  // Label USDC (mainnet mint)
+  // Label USDC
   const MINT_LABELS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC"
   };
 
   function fmt(num, maxFrac=6) {
     return Number(num).toLocaleString(undefined, { maximumFractionDigits: maxFrac });
   }
+  function shortMint(m){ return m.slice(0,4) + "…" + m.slice(-4); }
 
-  function shortMint(m) {
-    return m.slice(0,4) + "…" + m.slice(-4);
-  }
-
-  async function rpc(method, params) {
-    const res = await fetch(RPC, {
+  async function rpcCall(url, method, params) {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
     });
-    return await res.json();
+    if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+    const j = await res.json();
+    if (j?.error) throw new Error(j.error.message || "RPC error");
+    return j;
+  }
+
+  // Try RPCs in order until one works
+  async function rpc(method, params) {
+    let lastErr = null;
+    for (const url of RPCS) {
+      try { return await rpcCall(url, method, params); }
+      catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error("All RPCs failed");
   }
 
   async function loadSol() {
     const j = await rpc("getBalance", [WALLET]);
     const lamports = j?.result?.value ?? 0;
-    const sol = lamports / 1_000_000_000;
-    document.getElementById("sol").textContent = `SOL: ${fmt(sol, 4)}`;
+    document.getElementById("sol").textContent = `SOL: ${fmt(lamports / 1_000_000_000, 4)}`;
   }
 
-  async function fetchTokenAccountsByProgram(programId) {
+  async function fetchTokenAccounts(programId) {
     const j = await rpc("getTokenAccountsByOwner", [
       WALLET,
       { programId },
@@ -128,26 +92,19 @@
     return j?.result?.value || [];
   }
 
-  function addToMap(map, mint, uiAmount) {
-    if (!mint) return;
-    const amt = Number(uiAmount || 0);
-    if (!amt) return; // skip zero balances
-    map.set(mint, (map.get(mint) || 0) + amt);
-  }
-
   async function loadAllSplTokens() {
     const [v1, v2022] = await Promise.all([
-      fetchTokenAccountsByProgram(TOKEN_PROGRAM),
-      fetchTokenAccountsByProgram(TOKEN_2022_PROGRAM)
+      fetchTokenAccounts(TOKEN_PROGRAM),
+      fetchTokenAccounts(TOKEN_2022_PROGRAM)
     ]);
 
     const map = new Map();
-
     for (const v of [...v1, ...v2022]) {
       const info = v?.account?.data?.parsed?.info;
       const mint = info?.mint;
-      const uiAmount = info?.tokenAmount?.uiAmount;
-      addToMap(map, mint, uiAmount);
+      const uiAmount = info?.tokenAmount?.uiAmount ?? 0;
+      if (!mint || !uiAmount) continue;
+      map.set(mint, (map.get(mint) || 0) + Number(uiAmount));
     }
 
     const arr = Array.from(map.entries())
@@ -158,7 +115,7 @@
     list.innerHTML = "";
 
     if (arr.length === 0) {
-      list.innerHTML = `<div class="muted">No SPL token balances found for this wallet.</div>`;
+      list.innerHTML = `<div class="muted">No SPL token balances found (or RPC blocked).</div>`;
       return;
     }
 
@@ -188,8 +145,7 @@
         "Updated " + new Date().toLocaleTimeString();
     } catch (e) {
       errBox.style.display = "block";
-      errBox.textContent =
-        "Refresh error (public RPC can rate limit). Try again in a moment.";
+      errBox.textContent = "RPC blocked/rate-limited. " + (e?.message || "");
     }
   }
 
