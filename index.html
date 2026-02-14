@@ -3,57 +3,70 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Wallet SPL Balances</title>
+  <title>Traffic Trencher Token Balance</title>
   <style>
-    body{margin:0;background:rgba(0,0,0,0);font-family:Arial,sans-serif;color:#fff}
-    .wrap{display:inline-block;background:rgba(0,0,0,.72);border-radius:14px;padding:14px 16px;min-width:340px;max-width:460px}
-    .title{font-size:14px;opacity:.85;letter-spacing:.3px}
-    .big{font-size:26px;font-weight:900;margin-top:6px;line-height:1.1}
-    .muted{font-size:12px;opacity:.7;margin-top:8px}
-    .list{margin-top:10px;max-height:320px;overflow:auto;padding-right:6px}
-    .row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);align-items:baseline}
-    .left{min-width:0}
-    .sym{font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
-    .mint{font-size:11px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
-    .amt{font-size:14px;font-weight:900;text-align:right;white-space:nowrap}
-    .err{color:#ffb3b3;font-size:12px;margin-top:8px}
+    body{
+      margin:0;
+      background: rgba(0,0,0,0);
+      font-family: Arial, sans-serif;
+      color:#fff;
+    }
+    .box{
+      display:inline-block;
+      background: rgba(0,0,0,0.72);
+      border-radius: 16px;
+      padding: 16px 18px;
+      min-width: 320px;
+    }
+    .label{
+      font-size: 14px;
+      opacity: 0.85;
+      letter-spacing: 0.2px;
+    }
+    .value{
+      font-size: 42px;
+      font-weight: 1000;
+      margin-top: 8px;
+      line-height: 1.05;
+    }
+    .sub{
+      font-size: 12px;
+      opacity: 0.7;
+      margin-top: 8px;
+    }
+    .err{
+      font-size: 12px;
+      color: #ffb3b3;
+      margin-top: 10px;
+      display:none;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="title">SPL TOKEN BALANCES (INCLUDING USDC)</div>
-    <div class="big" id="sol">SOL: …</div>
-    <div class="list" id="list"></div>
-    <div class="muted" id="updated">…</div>
-    <div class="err" id="err" style="display:none;"></div>
+  <div class="box">
+    <div class="label">Traffic Trencher Token Balance</div>
+    <div class="value" id="bal">…</div>
+    <div class="sub" id="updated">…</div>
+    <div class="err" id="err"></div>
   </div>
 
 <script>
-  // Wallet you gave me
   const WALLET = "CviKehFyefZVe4CV7D5ZoDsmwubtpjwysG4oxxDYPqGP";
 
-  // Try multiple RPCs (free). If one blocks, we fall back.
-  // You can reorder these if one works better for you.
+  // ✅ NEW TOKEN MINT
+  const TOKEN_MINT = "BwWdcMtBRz8R38sbjA3GnkR35wz6z3xz3GFiS1yGpump";
+
+  // Free RPC fallback (helps when one endpoint blocks/rate-limits)
   const RPCS = [
     "https://rpc.ankr.com/solana",
     "https://api.mainnet-beta.solana.com"
   ];
 
-  const REFRESH_MS = 10000;
+  const REFRESH_MS = 5000;
 
-  // Token programs
-  const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-  const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-
-  // Label USDC
-  const MINT_LABELS = {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC"
-  };
-
-  function fmt(num, maxFrac=6) {
-    return Number(num).toLocaleString(undefined, { maximumFractionDigits: maxFrac });
+  function fmt(n, maxFrac=6){
+    return Number(n).toLocaleString(undefined, { maximumFractionDigits: maxFrac });
   }
-  function shortMint(m){ return m.slice(0,4) + "…" + m.slice(-4); }
 
   async function rpcCall(url, method, params) {
     const res = await fetch(url, {
@@ -61,13 +74,12 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const j = await res.json();
     if (j?.error) throw new Error(j.error.message || "RPC error");
     return j;
   }
 
-  // Try RPCs in order until one works
   async function rpc(method, params) {
     let lastErr = null;
     for (const url of RPCS) {
@@ -77,75 +89,35 @@
     throw lastErr || new Error("All RPCs failed");
   }
 
-  async function loadSol() {
-    const j = await rpc("getBalance", [WALLET]);
-    const lamports = j?.result?.value ?? 0;
-    document.getElementById("sol").textContent = `SOL: ${fmt(lamports / 1_000_000_000, 4)}`;
-  }
-
-  async function fetchTokenAccounts(programId) {
+  async function loadTokenBalance() {
     const j = await rpc("getTokenAccountsByOwner", [
       WALLET,
-      { programId },
+      { mint: TOKEN_MINT },
       { encoding: "jsonParsed" }
     ]);
-    return j?.result?.value || [];
-  }
 
-  async function loadAllSplTokens() {
-    const [v1, v2022] = await Promise.all([
-      fetchTokenAccounts(TOKEN_PROGRAM),
-      fetchTokenAccounts(TOKEN_2022_PROGRAM)
-    ]);
+    const accounts = j?.result?.value || [];
+    let total = 0;
 
-    const map = new Map();
-    for (const v of [...v1, ...v2022]) {
-      const info = v?.account?.data?.parsed?.info;
-      const mint = info?.mint;
-      const uiAmount = info?.tokenAmount?.uiAmount ?? 0;
-      if (!mint || !uiAmount) continue;
-      map.set(mint, (map.get(mint) || 0) + Number(uiAmount));
+    for (const acc of accounts) {
+      total += acc?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
     }
 
-    const arr = Array.from(map.entries())
-      .map(([mint, amount]) => ({ mint, amount }))
-      .sort((a,b) => b.amount - a.amount);
-
-    const list = document.getElementById("list");
-    list.innerHTML = "";
-
-    if (arr.length === 0) {
-      list.innerHTML = `<div class="muted">No SPL token balances found (or RPC blocked).</div>`;
-      return;
-    }
-
-    for (const t of arr) {
-      const label = MINT_LABELS[t.mint] || shortMint(t.mint);
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML = `
-        <div class="left">
-          <div class="sym">${label}</div>
-          <div class="mint">${t.mint}</div>
-        </div>
-        <div class="amt">${fmt(t.amount, 6)}</div>
-      `;
-      list.appendChild(row);
-    }
+    document.getElementById("bal").textContent = fmt(total, 6);
+    document.getElementById("updated").textContent =
+      "Updated " + new Date().toLocaleTimeString();
   }
 
   async function tick() {
-    const errBox = document.getElementById("err");
-    errBox.style.display = "none";
-    errBox.textContent = "";
+    const err = document.getElementById("err");
+    err.style.display = "none";
+    err.textContent = "";
 
     try {
-      await Promise.all([loadSol(), loadAllSplTokens()]);
-      document.getElementById("updated").textContent =
-        "Updated " + new Date().toLocaleTimeString();
+      await loadTokenBalance();
     } catch (e) {
-      errBox.style.display = "block";
-      errBox.textContent = "RPC blocked/rate-limited. " + (e?.message || "");
+      err.style.display = "block";
+      err.textContent = "Update failed (RPC rate limit sometimes).";
     }
   }
 
