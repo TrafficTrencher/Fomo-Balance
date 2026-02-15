@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Traffic Trencher Token Balance</title>
+  <style>
+    body{margin:0;background:rgba(0,0,0,0);font-family:Arial,sans-serif;color:#fff}
+    .box{display:inline-block;background:rgba(0,0,0,.72);border-radius:16px;padding:16px 18px;min-width:360px}
+    .label{font-size:14px;opacity:.85}
+    .usd{font-size:44px;font-weight:900;margin-top:8px}
+    .tok{font-size:14px;font-weight:800;margin-top:6px;opacity:.92}
+    .sub{font-size:12px;opacity:.7;margin-top:8px}
+    .err{font-size:12px;color:#ffb3b3;margin-top:10px;display:none;max-width:520px;word-break:break-word}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="label">Traffic Trencher Token Balance</div>
+    <div class="usd" id="usd">$0.00</div>
+    <div class="tok" id="tok">0 tokens</div>
+    <div class="sub" id="updated">Starting…</div>
+    <div class="err" id="err"></div>
+  </div>
+
+<script>
+  const WALLET = "CviKehFyefZVe4CV7D5ZoDsmwubtpjwysG4oxxDYPqGP";
+  const TOKEN_MINT = "BwWdcMtBRz8R38sbjA3GnkR35wz6z3xz3GFiS1yGpump";
+
+  // ✅ Your Helius key
+  const HELIUS_KEY = "f4eddc6c-77f2-47f7-897a-f2467d3b8a35";
+  const RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
+
+  // Jupiter price API (free)
+  const PRICE_URL = `https://price.jup.ag/v6/price?ids=${encodeURIComponent(TOKEN_MINT)}`;
+
+  // PRISM-friendly refresh
+  const REFRESH_MS = 20000;
+
+  let lastTokens = null;
+  let lastPrice = null;
+
+  function fmt(n, maxFrac=6){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:maxFrac}); }
+  function fmtUSD(n){ return "$" + Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  async function rpc(method, params) {
+    const res = await fetch(RPC, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+    });
+
+    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+    const j = await res.json();
+    if (j?.error) throw new Error(j.error.message || "RPC error");
+    return j;
+  }
+
+  async function getTokenBalance() {
+    const j = await rpc("getTokenAccountsByOwner", [
+      WALLET,
+      { mint: TOKEN_MINT },
+      { encoding: "jsonParsed" }
+    ]);
+
+    const accounts = j?.result?.value || [];
+    let total = 0;
+    for (const acc of accounts) {
+      total += acc?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
+    }
+    return total;
+  }
+
+  async function getPrice() {
+    const res = await fetch(PRICE_URL);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const p = j?.data?.[TOKEN_MINT]?.price;
+    return (typeof p === "number") ? p : null;
+  }
+
+  function render(tokens, price) {
+    if (tokens !== null) document.getElementById("tok").textContent = `${fmt(tokens, 6)} tokens`;
+    if (price !== null && tokens !== null) document.getElementById("usd").textContent = fmtUSD(tokens * price);
+    if (price === null && tokens !== null) document.getElementById("usd").textContent = "USD: N/A";
+  }
+
+  async function tick() {
+    const err = document.getElementById("err");
+    err.style.display = "none";
+    err.textContent = "";
+
+    try {
+      const [tokens, price] = await Promise.all([getTokenBalance(), getPrice()]);
+      lastTokens = tokens;
+      if (price !== null) lastPrice = price;
+
+      render(lastTokens, lastPrice);
+      document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+    } catch (e) {
+      render(lastTokens, lastPrice);
+      document.getElementById("updated").textContent = "Retrying… " + new Date().toLocaleTimeString();
+      err.style.display = "block";
+      err.textContent = String(e?.message || e);
+    }
+  }
+
+  tick();
+  setInterval(tick, REFRESH_MS);
+</script>
+</body>
+</html>
