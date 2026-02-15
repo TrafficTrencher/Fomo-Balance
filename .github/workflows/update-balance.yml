@@ -1,0 +1,83 @@
+name: Update Token Balance JSON
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes
+  workflow_dispatch: {}      # lets you run it manually too
+
+permissions:
+  contents: write            # allows committing balance.json
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build balance.json
+        env:
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+        run: |
+          python - << 'PY'
+          import json, os, urllib.request
+
+          WALLET = "CviKehFyefZVe4CV7D5ZoDsmwubtpjwysG4oxxDYPqGP"
+          MINT   = "BwWdcMtBRz8R38sbjA3GnkR35wz6z3xz3GFiS1yGpump"
+          HELIUS = os.environ["HELIUS_API_KEY"]
+
+          def post_json(url, payload):
+              data = json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(url, data=data, headers={"Content-Type":"application/json"})
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          def get_json(url):
+              with urllib.request.urlopen(url, timeout=20) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          # 1) token balance from Helius RPC
+          rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS}"
+          payload = {
+              "jsonrpc":"2.0",
+              "id":1,
+              "method":"getTokenAccountsByOwner",
+              "params":[WALLET, {"mint": MINT}, {"encoding":"jsonParsed"}]
+          }
+          resp = post_json(rpc_url, payload)
+
+          total = 0.0
+          for v in resp.get("result", {}).get("value", []):
+              info = v["account"]["data"]["parsed"]["info"]
+              total += float(info["tokenAmount"].get("uiAmount") or 0)
+
+          # 2) price from Jupiter
+          price_url = f"https://price.jup.ag/v6/price?ids={MINT}"
+          price_resp = get_json(price_url)
+          price = price_resp.get("data", {}).get(MINT, {}).get("price")
+
+          # 3) compute usd if price exists
+          total_usd = float(total) * float(price) if isinstance(price, (int,float)) else None
+
+          out = {
+              "wallet": WALLET,
+              "mint": MINT,
+              "balance": total,
+              "price_usd": price,
+              "total_usd": total_usd
+          }
+
+          with open("balance.json", "w") as f:
+              json.dump(out, f)
+
+          print("Wrote balance.json:", out)
+          PY
+
+      - name: Commit and push balance.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add balance.json
+          git commit -m "Update balance.json" || echo "No changes to commit"
+          git push
